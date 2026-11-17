@@ -1534,13 +1534,12 @@ wl_handle_private_cmd(struct net_device *net, char *command, u32 buf_size)
 		bytes_written = wl_android_get_band(net, command, priv_cmd.total_len);
 	}
 #ifdef WL_CFG80211
-	/* CUSTOMER_SET_COUNTRY feature is define for only GGSM model */
+	/* COUNTRY comes from the Android framework (wpa_supplicant setCountryCode).
+	 * Handle it like NV_COUNTRY: translate and set without forcing a disassoc.
+	 */
 	else if (strnicmp(command, CMD_COUNTRY, strlen(CMD_COUNTRY)) == 0) {
-		//char *country_code = command + strlen(CMD_COUNTRY) + 1;
-		//bytes_written = wldev_set_country(net, country_code, true, false);
-		/* We use only NV_COUNTRY command to set the country code
-		 * Do not allow default COUNTRY command to set the country code */
-		bytes_written = 0;
+		char *country_code = command + strlen(CMD_COUNTRY) + 1;
+		bytes_written = wldev_set_country(net, country_code, true, false);
 	} else if (strnicmp(command, CMD_NV_COUNTRY, strlen(CMD_NV_COUNTRY)) == 0) {
 		char *country_code = command + strlen(CMD_NV_COUNTRY) + 1;
 		bytes_written = wldev_set_country(net, country_code, true, false);
