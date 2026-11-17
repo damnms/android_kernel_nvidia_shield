@@ -1027,6 +1027,7 @@ static void * __initdata vmalloc_min =
  */
 static int __init early_vmalloc(char *arg)
 {
+	static unsigned long __initdata largest_reserve;
 	unsigned long vmalloc_reserve = memparse(arg, NULL);
 
 	if (vmalloc_reserve < SZ_16M) {
@@ -1042,6 +1043,14 @@ static int __init early_vmalloc(char *arg)
 			"vmalloc area is too big, limiting to %luMB\n",
 			vmalloc_reserve >> 20);
 	}
+
+	/*
+	 * The nvidia bootloader appends its own, smaller vmalloc= after the
+	 * one from the boot image. Keep the largest value instead of the last.
+	 */
+	if (vmalloc_reserve <= largest_reserve)
+		return 0;
+	largest_reserve = vmalloc_reserve;
 
 	vmalloc_min = (void *)(VMALLOC_END - vmalloc_reserve);
 	return 0;
