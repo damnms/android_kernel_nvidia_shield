@@ -454,7 +454,7 @@ module_param(dhd_arp_mode, uint, 0);
 module_param(disable_proptx, int, 0644);
 /* load firmware and/or nvram values from the filesystem */
 module_param_string(firmware_path, firmware_path, MOD_PARAM_PATHLEN, 0660);
-module_param_string(nvram_path, nvram_path, MOD_PARAM_PATHLEN, 0);
+module_param_string(nvram_path, nvram_path, MOD_PARAM_PATHLEN, 0660);
 
 
 /* Watchdog interval */
@@ -3227,6 +3227,14 @@ dhd_open(struct net_device *net)
 		bzero(fw_path, MOD_PARAM_PATHLEN);
 		strncpy(fw_path, firmware_path, sizeof(fw_path)-1);
 		firmware_path[0] = '\0';
+	}
+	/* Update nvram path if it was changed (e.g. another regulatory locale) */
+	if (strlen(nvram_path) != 0) {
+		if (nvram_path[strlen(nvram_path)-1] == '\n')
+			nvram_path[strlen(nvram_path)-1] = '\0';
+		bzero(nv_path, MOD_PARAM_PATHLEN);
+		strncpy(nv_path, nvram_path, sizeof(nv_path)-1);
+		nvram_path[0] = '\0';
 	}
 
 
