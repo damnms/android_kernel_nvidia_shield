@@ -2572,6 +2572,16 @@ wl_cfgp2p_add_p2p_disc_if(void)
 	if (!wl)
 		return NULL;
 
+	/* P2P is not set up when the firmware runs in SoftAP mode
+	 * (op_mode == DHD_FLAG_HOSTAP_MODE). Refuse instead of
+	 * dereferencing wl->p2p below; NULL would look like success
+	 * to nl80211.
+	 */
+	if (!wl->p2p) {
+		WL_ERR(("P2P is not initialized, cannot add the p2p device\n"));
+		return ERR_PTR(-ENODEV);
+	}
+
 	WL_TRACE(("Enter\n"));
 
 	if (wl->p2p_wdev) {
