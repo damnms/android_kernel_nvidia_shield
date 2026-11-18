@@ -4001,6 +4001,7 @@ int
 dhd_preinit_ioctls(dhd_pub_t *dhd)
 {
 	int ret = 0;
+	struct net_device *net;
 	char eventmask[WL_EVENTING_MASK_LEN];
 	char iovbuf[WL_EVENTING_MASK_LEN + 12];	/*  Room for "event_msgs" + '\0' + bitvec  */
 	uint32 buf_key_b4_m4 = 1;
@@ -4118,6 +4119,15 @@ dhd_preinit_ioctls(dhd_pub_t *dhd)
 #ifdef GET_CUSTOM_MAC_ENABLE
 	}
 #endif /* GET_CUSTOM_MAC_ENABLE */
+
+	/* register_netdev() ran before the factory MAC was known and saved the
+	 * placeholder 00:90:4c:11:22:33 as the permanent address. The wifi HAL
+	 * reads it (ETHTOOL_GPERMADDR) as the factory MAC, so "use device MAC"
+	 * connected with the placeholder. Store the real one.
+	 */
+	net = dhd_idx2net(dhd, 0);
+	if (net && !ETHER_ISNULLADDR(dhd->mac.octet))
+		memcpy(net->perm_addr, dhd->mac.octet, ETHER_ADDR_LEN);
 
 	DHD_TRACE(("Firmware = %s\n", fw_path));
 	/* get a capabilities from firmware */
