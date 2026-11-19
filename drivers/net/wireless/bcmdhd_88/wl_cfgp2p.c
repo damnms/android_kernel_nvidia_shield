@@ -712,6 +712,11 @@ wl_cfgp2p_enable_discovery(struct wl_priv *wl, struct net_device *dev,
 	ret = wl_cfgp2p_init_discovery(wl);
 	if (unlikely(ret < 0)) {
 		CFGP2P_ERR((" init discovery error %d\n", ret));
+		/* Allow the next scan to retry: a transient error (BCME_BUSY
+		 * from "p2p_disc") left DISCOVERY_ON set, every later call
+		 * skipped the init and P2P scans failed until Wi-Fi restarted.
+		 */
+		wl_clr_p2p_status(wl, DISCOVERY_ON);
 		goto exit;
 	}
 	/* Set wsec to any non-zero value in the discovery bsscfg to ensure our
