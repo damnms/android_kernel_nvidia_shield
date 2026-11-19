@@ -11615,6 +11615,16 @@ static void wl_cfg80211_clear_parent_dev(void)
 
 void get_primary_mac(struct wl_priv *wl, struct ether_addr *mac)
 {
+	struct net_device *ndev = wl_to_prmry_ndev(wl);
+
+	/* The P2P addresses are derived from this MAC. Use the factory
+	 * address: with a randomized (locally administered) MAC the P2P
+	 * device address would equal the station address.
+	 */
+	if (ndev && !ETHER_ISNULLADDR(ndev->perm_addr)) {
+		memcpy(mac->octet, ndev->perm_addr, ETHER_ADDR_LEN);
+		return;
+	}
 	wldev_iovar_getbuf_bsscfg(wl_to_prmry_ndev(wl), "cur_etheraddr", NULL,
 		0, wl->ioctl_buf, WLC_IOCTL_SMLEN, 0, &wl->ioctl_buf_sync);
 	memcpy(mac->octet, wl->ioctl_buf, ETHER_ADDR_LEN);

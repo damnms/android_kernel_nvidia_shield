@@ -616,6 +616,19 @@ wl_cfgp2p_init_discovery(struct wl_priv *wl)
 		return ret;
 	}
 
+	/* Without an override the firmware derives the P2P device address
+	 * from the current MAC by setting the locally administered bit. A
+	 * randomized MAC already has that bit, both addresses are equal and
+	 * "p2p_disc" fails with BCME_BUSY. Hand over the address the driver
+	 * derived from the factory MAC instead.
+	 */
+	if (!ETHER_ISNULLADDR(wl->p2p->dev_addr.octet)) {
+		s32 err = wldev_iovar_setbuf_bsscfg(wl_to_prmry_ndev(wl),
+			"p2p_da_override", &wl->p2p->dev_addr, sizeof(wl->p2p->dev_addr),
+			wl->ioctl_buf, WLC_IOCTL_MAXLEN, 0, &wl->ioctl_buf_sync);
+		if (err && err != BCME_UNSUPPORTED)
+			CFGP2P_ERR(("p2p_da_override error %d\n", err));
+	}
 	ret = wl_cfgp2p_set_discovery(wl, 1);
 	if (ret < 0) {
 		CFGP2P_ERR(("set discover error\n"));
