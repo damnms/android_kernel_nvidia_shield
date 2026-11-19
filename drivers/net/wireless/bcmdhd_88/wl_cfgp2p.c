@@ -1666,8 +1666,14 @@ wl_cfgp2p_cancel_listen(struct wl_priv *wl, struct net_device *ndev,
 		if (notify)
 			if (ndev && ndev->ieee80211_ptr) {
 #if defined(WL_CFG80211_P2P_DEV_IF)
-				cfg80211_remain_on_channel_expired(wdev, wl->last_roc_id,
-					&wl->remain_on_chan, GFP_KERNEL);
+				/* The p2p device may already be unregistered
+				 * (wl_cfgp2p_del_p2p_disc_if) when Wi-Fi goes down
+				 * during a listen; cfg80211 would dereference NULL.
+				 */
+				if (wdev)
+					cfg80211_remain_on_channel_expired(wdev,
+						wl->last_roc_id, &wl->remain_on_chan,
+						GFP_KERNEL);
 #else
 				cfg80211_remain_on_channel_expired(ndev, wl->last_roc_id,
 					&wl->remain_on_chan, wl->remain_on_chan_type, GFP_KERNEL);
