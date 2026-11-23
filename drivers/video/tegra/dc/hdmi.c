@@ -2352,6 +2352,21 @@ static void tegra_dc_hdmi_enable(struct tegra_dc *dc)
 	tegra_dc_io_end(dc);
 
 	tegra_hdmi_setup_hda_presence();
+
+#ifdef CONFIG_SWITCH
+	/* report HDMI audio only now: before the HDA presence is set up, the
+	 * HDMI PCM fails to open with -ENODEV and Android never opens the
+	 * HDMI output
+	 */
+	if (hdmi->eld_retrieved && tegra_dc_hpd(dc)) {
+		int state = tegra_edid_audio_supported(hdmi->edid) ? 1 : 0;
+
+		if (switch_get_state(&hdmi->audio_switch) != state) {
+			switch_set_state(&hdmi->audio_switch, state);
+			pr_info("%s: audio_switch %d\n", __func__, state);
+		}
+	}
+#endif
 }
 
 static void tegra_dc_hdmi_disable(struct tegra_dc *dc)
