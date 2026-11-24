@@ -1288,6 +1288,24 @@ static int hdmi_read_pin_conn(struct hda_codec *codec, int pin_idx)
 	return 0;
 }
 
+/* hdmi_pcm_open() opens the PCM of a Tegra codec once the monitor is
+ * present and its SADs are parsed; from then on the display driver may
+ * report HDMI audio
+ */
+static void hdmi_tegra_audio_ready(struct hda_codec *codec,
+				   struct hdmi_eld *pin_eld)
+{
+#ifdef CONFIG_SND_HDA_PLATFORM_NVIDIA_TEGRA
+	if (pin_eld->monitor_present && pin_eld->info.lpcm_sad_ready &&
+	    ((codec->preset->id == 0x10de0020) ||
+	     (codec->preset->id == 0x10de0022) ||
+	     (codec->preset->id == 0x10de0028) ||
+	     (codec->preset->id == 0x10de0029) ||
+	     (codec->preset->id == 0x10de002a)))
+		tegra_hdmi_audio_ready();
+#endif
+}
+
 static void hdmi_present_sense(struct hdmi_spec_per_pin *per_pin, int repoll)
 {
 	struct hda_codec *codec = per_pin->codec;
@@ -1345,6 +1363,7 @@ static void hdmi_present_sense(struct hdmi_spec_per_pin *per_pin, int repoll)
 			update_eld = true;
 		}
 		else if (repoll) {
+			hdmi_tegra_audio_ready(codec, pin_eld);
 			queue_delayed_work(codec->bus->workq,
 					   &per_pin->work,
 					   msecs_to_jiffies(300));
@@ -1387,6 +1406,8 @@ static void hdmi_present_sense(struct hdmi_spec_per_pin *per_pin, int repoll)
 		snd_ctl_notify(codec->bus->card,
 			       SNDRV_CTL_EVENT_MASK_VALUE | SNDRV_CTL_EVENT_MASK_INFO,
 			       &per_pin->eld_ctl->id);
+
+	hdmi_tegra_audio_ready(codec, pin_eld);
 }
 
 static void hdmi_repoll_eld(struct work_struct *work)

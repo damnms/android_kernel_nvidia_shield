@@ -1108,6 +1108,47 @@ static int tegra_hdmi_get_max_channels(void)
 	return max_channels;
 }
 
+/* until the HDA codec reports its ELD, hand it the presence again every
+ * HDMI_AUDIO_RETRY_MS; report HDMI audio anyway after HDMI_AUDIO_RETRIES
+ */
+#define HDMI_AUDIO_RETRY_MS	500
+#define HDMI_AUDIO_RETRIES	10
+
+#ifdef CONFIG_SWITCH
+static void tegra_hdmi_report_audio(struct tegra_dc_hdmi_data *hdmi,
+				    const char *why)
+{
+	int state;
+
+	if (!hdmi->eld_retrieved || !tegra_dc_hpd(hdmi->dc))
+		return;
+
+	state = tegra_edid_audio_supported(hdmi->edid) ? 1 : 0;
+	if (switch_get_state(&hdmi->audio_switch) != state) {
+		switch_set_state(&hdmi->audio_switch, state);
+		pr_info("hdmi: audio_switch %d (%s)\n", state, why);
+	}
+}
+
+static void tegra_hdmi_audio_switch_worker(struct work_struct *work)
+{
+	struct tegra_dc_hdmi_data *hdmi = container_of(to_delayed_work(work),
+			struct tegra_dc_hdmi_data, audio_switch_work);
+
+	if (!hdmi->eld_retrieved || !tegra_dc_hpd(hdmi->dc) ||
+	    switch_get_state(&hdmi->audio_switch))
+		return;
+
+	if (++hdmi->audio_switch_retries < HDMI_AUDIO_RETRIES) {
+		tegra_hdmi_setup_hda_presence();
+		schedule_delayed_work(&hdmi->audio_switch_work,
+				      msecs_to_jiffies(HDMI_AUDIO_RETRY_MS));
+		return;
+	}
+	tegra_hdmi_report_audio(hdmi, "fallback");
+}
+#endif
+
 static int tegra_dc_hdmi_init(struct tegra_dc *dc)
 {
 	struct tegra_dc_hdmi_data *hdmi;
@@ -1296,6 +1337,8 @@ static int tegra_dc_hdmi_init(struct tegra_dc *dc)
 			&dev_attr_underscan);
 	BUG_ON(ret != 0);
 
+	INIT_DELAYED_WORK(&hdmi->audio_switch_work,
+			  tegra_hdmi_audio_switch_worker);
 	hdmi->audio_switch.name = "hdmi_audio";
 	ret = switch_dev_register(&hdmi->audio_switch);
 
@@ -1430,6 +1473,7 @@ static void tegra_dc_hdmi_destroy(struct tegra_dc *dc)
 
 	i2c_release_client(hdmi->i2c_info.client);
 #ifdef CONFIG_SWITCH
+	cancel_delayed_work_sync(&hdmi->audio_switch_work);
 	switch_dev_unregister(&hdmi->hpd_switch);
 	switch_dev_unregister(&hdmi->audio_switch);
 #endif
@@ -1777,6 +1821,23 @@ int tegra_hdmi_setup_hda_presence()
 
 }
 EXPORT_SYMBOL(tegra_hdmi_setup_hda_presence);
+
+/* Called by the HDA HDMI codec once it has the monitor's ELD. Only from
+ * then on the HDMI PCM opens; reporting HDMI audio earlier made the audio
+ * HAL fail with -ENODEV and Android never opened the HDMI output.
+ */
+void tegra_hdmi_audio_ready(void)
+{
+	struct tegra_dc_hdmi_data *hdmi = dc_hdmi;
+
+	if (!hdmi)
+		return;
+#ifdef CONFIG_SWITCH
+	cancel_delayed_work(&hdmi->audio_switch_work);
+	tegra_hdmi_report_audio(hdmi, "hda ready");
+#endif
+}
+EXPORT_SYMBOL(tegra_hdmi_audio_ready);
 #endif
 
 static void tegra_dc_hdmi_write_infopack(struct tegra_dc *dc, int header_reg,
@@ -2354,18 +2415,12 @@ static void tegra_dc_hdmi_enable(struct tegra_dc *dc)
 	tegra_hdmi_setup_hda_presence();
 
 #ifdef CONFIG_SWITCH
-	/* report HDMI audio only now: before the HDA presence is set up, the
-	 * HDMI PCM fails to open with -ENODEV and Android never opens the
-	 * HDMI output
+	/* HDMI audio is reported by tegra_hdmi_audio_ready() once the HDA
+	 * codec has the ELD; the work retries if the codec missed the event
 	 */
-	if (hdmi->eld_retrieved && tegra_dc_hpd(dc)) {
-		int state = tegra_edid_audio_supported(hdmi->edid) ? 1 : 0;
-
-		if (switch_get_state(&hdmi->audio_switch) != state) {
-			switch_set_state(&hdmi->audio_switch, state);
-			pr_info("%s: audio_switch %d\n", __func__, state);
-		}
-	}
+	hdmi->audio_switch_retries = 0;
+	schedule_delayed_work(&hdmi->audio_switch_work,
+			      msecs_to_jiffies(HDMI_AUDIO_RETRY_MS));
 #endif
 }
 

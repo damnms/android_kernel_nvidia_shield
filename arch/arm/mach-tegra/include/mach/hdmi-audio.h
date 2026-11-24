@@ -43,8 +43,10 @@ enum {
 int tegra_hdmi_setup_audio_freq_source(unsigned audio_freq, unsigned audio_source);
 #ifdef CONFIG_TEGRA_DC
 int tegra_hdmi_setup_hda_presence(void);
+void tegra_hdmi_audio_ready(void);
 #else
 static inline int tegra_hdmi_setup_hda_presence(void) { return -ENODEV; }
+static inline void tegra_hdmi_audio_ready(void) { }
 #endif
 int tegra_hdmi_audio_null_sample_inject(bool on);
 
