@@ -1135,12 +1135,15 @@ static void tegra_hdmi_audio_switch_worker(struct work_struct *work)
 	struct tegra_dc_hdmi_data *hdmi = container_of(to_delayed_work(work),
 			struct tegra_dc_hdmi_data, audio_switch_work);
 
-	if (!hdmi->eld_retrieved || !tegra_dc_hpd(hdmi->dc) ||
-	    switch_get_state(&hdmi->audio_switch))
+	if (switch_get_state(&hdmi->audio_switch))
 		return;
 
+	/* keep going through an HPD bounce: after it the state machine only
+	 * rechecks the EDID and does not enable the output again
+	 */
 	if (++hdmi->audio_switch_retries < HDMI_AUDIO_RETRIES) {
-		tegra_hdmi_setup_hda_presence();
+		if (hdmi->eld_retrieved && tegra_dc_hpd(hdmi->dc))
+			tegra_hdmi_setup_hda_presence();
 		schedule_delayed_work(&hdmi->audio_switch_work,
 				      msecs_to_jiffies(HDMI_AUDIO_RETRY_MS));
 		return;
