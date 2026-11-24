@@ -1199,6 +1199,12 @@ static int hdmi_pcm_open(struct hda_pcm_stream *hinfo,
 				return -ENODEV;
 			}
 		}
+		/* The unsolicited event for the presence arrives later, and not
+		 * at all while the codec was suspended (at boot): read the pin
+		 * now instead of failing the first open
+		 */
+		if (!eld->info.lpcm_sad_ready)
+			hdmi_present_sense(per_pin, 0);
 		if (!eld->info.lpcm_sad_ready)
 			return -ENODEV;
 		hinfo->pcm_open_retry_count = 0;
