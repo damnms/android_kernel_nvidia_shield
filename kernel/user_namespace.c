@@ -88,11 +88,12 @@ int create_user_ns(struct cred *new)
 	if (!ns)
 		return -ENOMEM;
 
-	ret = proc_alloc_inum(&ns->proc_inum);
+	ret = ns_alloc_inum(&ns->ns);
 	if (ret) {
 		kmem_cache_free(user_ns_cachep, ns);
 		return ret;
 	}
+	ns->ns.ops = &userns_operations;
 
 	atomic_set(&ns->count, 1);
 	/* Leave the new->user_ns reference with the new user namespace. */
@@ -137,7 +138,7 @@ void free_user_ns(struct user_namespace *ns)
 
 	do {
 		parent = ns->parent;
-		proc_free_inum(ns->proc_inum);
+		ns_free_inum(&ns->ns);
 		kmem_cache_free(user_ns_cachep, ns);
 		ns = parent;
 	} while (atomic_dec_and_test(&parent->count));
@@ -930,7 +931,27 @@ bool userns_may_setgroups(const struct user_namespace *ns)
 	return allowed;
 }
 
-static void *userns_get(struct task_struct *task)
+/*
+ * Returns true if @ns is the same namespace as or a descendant of
+ * @target_ns.
+ */
+bool current_in_userns(const struct user_namespace *target_ns)
+{
+       struct user_namespace *ns;
+       for (ns = current_user_ns(); ns; ns = ns->parent) {
+               if (ns == target_ns)
+                       return true;
+       }
+       return false;
+}
+
+
+static inline struct user_namespace *to_user_ns(struct ns_common *ns)
+{
+	return container_of(ns, struct user_namespace, ns);
+}
+
+static struct ns_common *userns_get(struct task_struct *task)
 {
 	struct user_namespace *user_ns;
 
@@ -938,17 +959,17 @@ static void *userns_get(struct task_struct *task)
 	user_ns = get_user_ns(__task_cred(task)->user_ns);
 	rcu_read_unlock();
 
-	return user_ns;
+	return user_ns ? &user_ns->ns : NULL;
 }
 
-static void userns_put(void *ns)
+static void userns_put(struct ns_common *ns)
 {
-	put_user_ns(ns);
+	put_user_ns(to_user_ns(ns));
 }
 
-static int userns_install(struct nsproxy *nsproxy, void *ns)
+static int userns_install(struct nsproxy *nsproxy, struct ns_common *ns)
 {
-	struct user_namespace *user_ns = ns;
+	struct user_namespace *user_ns = to_user_ns(ns);
 	struct cred *cred;
 
 	/* Don't allow gaining capabilities by reentering
@@ -977,19 +998,12 @@ static int userns_install(struct nsproxy *nsproxy, void *ns)
 	return commit_creds(cred);
 }
 
-static unsigned int userns_inum(void *ns)
-{
-	struct user_namespace *user_ns = ns;
-	return user_ns->proc_inum;
-}
-
 const struct proc_ns_operations userns_operations = {
 	.name		= "user",
 	.type		= CLONE_NEWUSER,
 	.get		= userns_get,
 	.put		= userns_put,
 	.install	= userns_install,
-	.inum		= userns_inum,
 };
 
 static __init int user_namespaces_init(void)
