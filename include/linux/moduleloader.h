@@ -28,6 +28,9 @@ void *module_alloc(unsigned long size);
 /* Free memory returned from module_alloc. */
 void module_free(struct module *mod, void *module_region);
 
+/* Free memory returned from module_alloc() (upstream 3.19 name). */
+void module_memfree(void *module_region);
+
 /*
  * Apply the given relocation to the (simplified) ELF.  Return -error
  * or 0.

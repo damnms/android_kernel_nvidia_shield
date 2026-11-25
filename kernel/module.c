@@ -1860,6 +1860,11 @@ void __weak module_free(struct module *mod, void *module_region)
 	vfree(module_region);
 }
 
+void module_memfree(void *module_region)
+{
+	module_free(NULL, module_region);
+}
+
 void __weak module_arch_cleanup(struct module *mod)
 {
 }
