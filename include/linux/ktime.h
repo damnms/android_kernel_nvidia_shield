@@ -376,4 +376,6 @@ static inline ktime_t ns_to_ktime(u64 ns)
 	return ktime_add_ns(ktime_zero, ns);
 }
 
+extern u64 ktime_get_mono_fast_ns(void);
+
 #endif

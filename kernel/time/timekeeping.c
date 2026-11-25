@@ -352,6 +352,20 @@ ktime_t ktime_get(void)
 EXPORT_SYMBOL_GPL(ktime_get);
 
 /**
+ * ktime_get_mono_fast_ns - CLOCK_MONOTONIC in nanoseconds for BPF
+ *
+ * Upstream provides an NMI safe variant based on the 3.17 timekeeper
+ * rework, which this tree does not have. ARM has no NMIs, so the
+ * seqcount based ktime_get() is used. Do not call this from code that
+ * can run inside a timekeeper update (e.g. kprobes on timekeeping).
+ */
+u64 notrace ktime_get_mono_fast_ns(void)
+{
+	return ktime_to_ns(ktime_get());
+}
+EXPORT_SYMBOL_GPL(ktime_get_mono_fast_ns);
+
+/**
  * ktime_get_ts - get the monotonic clock in timespec format
  * @ts:		pointer to timespec variable
  *

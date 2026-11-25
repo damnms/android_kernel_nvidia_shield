@@ -83,5 +83,12 @@ do {									\
 	asm volatile(   "dsb sy\n"                                      \
 		"isb\n" : : : "memory")
 
+#ifndef smp_mb__before_atomic
+#define smp_mb__before_atomic()	smp_mb()
+#endif
+#ifndef smp_mb__after_atomic
+#define smp_mb__after_atomic()	smp_mb()
+#endif
+
 #endif /* !__ASSEMBLY__ */
 #endif /* __ASM_BARRIER_H */

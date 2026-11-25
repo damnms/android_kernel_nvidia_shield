@@ -68,7 +68,6 @@
 
 #include "rtmutex_common.h"
 
-#define READ_ONCE(var) (*((volatile typeof(var) *)(&(var))))
 
 #ifndef CONFIG_HAVE_FUTEX_CMPXCHG
 int __read_mostly futex_cmpxchg_enabled;
