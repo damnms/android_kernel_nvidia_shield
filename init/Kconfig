@@ -1267,6 +1267,32 @@ config CC_OPTIMIZE_FOR_SIZE
 
 	  If unsure, say N.
 
+config ANDROID_SPOOF_KERNEL_VERSION
+	bool "Report a newer kernel version to selected Android processes"
+	help
+	  Android userspace gates features on the kernel version reported
+	  by uname(2): ART uses memfd_create() only from 3.17 on, and the
+	  bpf loaders of Android 12+ want 4.9 or later. This kernel carries
+	  backports of both, so let uname(2) report
+	  "<prefix>-<real release>" to the processes that check. Only the
+	  release field of uname(2) changes and only for these processes
+	  (matched by the name of the thread group leader); /proc/version
+	  and /proc/sys/kernel/osrelease stay real.
+
+	  - bpfloader, netbpfload: ANDROID_SPOOF_BPF_KERNEL_VERSION_PREFIX
+	  - system_server, zygote (leader name "main"), perfetto, init:
+	    ANDROID_SPOOF_KERNEL_VERSION_PREFIX
+
+config ANDROID_SPOOF_KERNEL_VERSION_PREFIX
+	string "Kernel version prefix for system processes"
+	depends on ANDROID_SPOOF_KERNEL_VERSION
+	default "3.17"
+
+config ANDROID_SPOOF_BPF_KERNEL_VERSION_PREFIX
+	string "Kernel version prefix for the bpf loaders"
+	depends on ANDROID_SPOOF_KERNEL_VERSION
+	default "4.9.337"
+
 config SYSCTL
 	bool
 

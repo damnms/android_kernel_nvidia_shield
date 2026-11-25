@@ -1082,6 +1082,44 @@ DECLARE_RWSEM(uts_sem);
 #define override_architecture(name)	0
 #endif
 
+#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION
+/*
+ * Version prefix uname(2) reports to the Android processes that gate
+ * backported features on the kernel version, see
+ * CONFIG_ANDROID_SPOOF_KERNEL_VERSION. Matched on the thread group
+ * leader, since every thread of a process carries its own comm.
+ */
+static const char *android_spoof_prefix(void)
+{
+	char comm[TASK_COMM_LEN];
+
+	get_task_comm(comm, current->group_leader);
+	if (!strcmp(comm, "bpfloader") || !strcmp(comm, "netbpfload"))
+		return CONFIG_ANDROID_SPOOF_BPF_KERNEL_VERSION_PREFIX;
+	if (!strcmp(comm, "system_server") || !strcmp(comm, "main") ||
+	    !strcmp(comm, "perfetto") || !strcmp(comm, "init"))
+		return CONFIG_ANDROID_SPOOF_KERNEL_VERSION_PREFIX;
+	return NULL;
+}
+
+static int override_android_release(char __user *release, size_t len)
+{
+	const char *prefix = android_spoof_prefix();
+	char buf[65];
+	size_t copy;
+
+	if (!prefix || !*prefix)
+		return 0;
+	copy = clamp_t(size_t, len, 1, sizeof(buf));
+	down_read(&uts_sem);
+	copy = scnprintf(buf, copy, "%s-%s", prefix, utsname()->release);
+	up_read(&uts_sem);
+	return copy_to_user(release, buf, copy + 1);
+}
+#else
+#define override_android_release(release, len)	0
+#endif
+
 /*
  * Work around broken programs that cannot handle "Linux 3.0".
  * Instead we map 3.x to 2.6.40+x, so e.g. 3.0 would be 2.6.40
@@ -1108,6 +1146,8 @@ static int override_release(char __user *release, size_t len)
 		copy = clamp_t(size_t, len, 1, sizeof(buf));
 		copy = scnprintf(buf, copy, "2.6.%u%s", v, rest);
 		ret = copy_to_user(release, buf, copy + 1);
+	} else {
+		ret = override_android_release(release, len);
 	}
 	return ret;
 }
