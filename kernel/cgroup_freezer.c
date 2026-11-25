@@ -73,17 +73,6 @@ bool cgroup_freezing(struct task_struct *task)
 	return ret;
 }
 
-bool cgroup_freezer_killable(struct task_struct *task)
-{
-	bool ret;
-
-	rcu_read_lock();
-	ret = task_freezer(task)->state & CGROUP_FREEZER_KILLABLE;
-	rcu_read_unlock();
-
-	return ret;
-}
-
 static const char *freezer_state_strs(unsigned int state)
 {
 	if (state & CGROUP_FROZEN)
@@ -459,39 +448,6 @@ static u64 freezer_parent_freezing_read(struct cgroup_subsys_state *css,
 	struct freezer *freezer = css_freezer(css);
 
 	return (bool)(freezer->state & CGROUP_FREEZING_PARENT);
-}
-
-static u64 freezer_killable_read(struct cgroup_subsys_state *css, struct cftype *cft)
-{
-	struct freezer *freezer = css_freezer(css);
-
-	return (bool)(freezer->state & CGROUP_FREEZER_KILLABLE);
-}
-
-static int freezer_killable_write(struct cgroup_subsys_state *css, struct cftype *cft, u64 val)
-{
-	struct freezer *freezer = css_freezer(css);
-
-	if (val > 1)
-		return -EINVAL;
-
-	if (val == !!(freezer->state & CGROUP_FREEZER_KILLABLE))
-		goto out;
-
-	if (val)
-		freezer->state |= CGROUP_FREEZER_KILLABLE;
-	else
-		freezer->state &= ~CGROUP_FREEZER_KILLABLE;
-
-
-	/*
-	 * Let __refrigerator spin once for each task to set it into the
-	 * appropriate state.
-	 */
-	unfreeze_cgroup(freezer);
-
-out:
-	return 0;
 }
 
 static struct cftype files[] = {

@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/slab.h>
 #include <linux/resource.h>
 #include <linux/platform_device.h>
 #include <linux/wlan_plat.h>

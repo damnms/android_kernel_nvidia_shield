@@ -14,6 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/slab.h>
 #include <linux/sysedp.h>
 #include <linux/edpdev.h>
 #include <linux/kernel.h>
