@@ -1656,7 +1656,8 @@ static int cgroup_setup_root(struct cgroup_root *root, unsigned int ss_mask)
 		goto out;
 	root_cgrp->id = ret;
 
-	ret = percpu_ref_init(&root_cgrp->self.refcnt, css_release);
+	ret = percpu_ref_init(&root_cgrp->self.refcnt, css_release, 0,
+			      GFP_KERNEL);
 	if (ret)
 		goto out;
 
@@ -1726,7 +1727,7 @@ destroy_root:
 exit_root_id:
 	cgroup_exit_root_id(root);
 cancel_ref:
-	percpu_ref_cancel_init(&root_cgrp->self.refcnt);
+	percpu_ref_exit(&root_cgrp->self.refcnt);
 out:
 	free_cgrp_cset_links(&tmp_links);
 	return ret;
@@ -4374,6 +4375,8 @@ static void css_free_work_fn(struct work_struct *work)
 		container_of(work, struct cgroup_subsys_state, destroy_work);
 	struct cgroup *cgrp = css->cgroup;
 
+	percpu_ref_exit(&css->refcnt);
+
 	if (css->ss) {
 		/* css free path */
 		if (css->parent)
@@ -4547,7 +4550,7 @@ static int create_css(struct cgroup *cgrp, struct cgroup_subsys *ss,
 
 	init_and_link_css(css, ss, cgrp);
 
-	err = percpu_ref_init(&css->refcnt, css_release);
+	err = percpu_ref_init(&css->refcnt, css_release, 0, GFP_KERNEL);
 	if (err)
 		goto err_free_css;
 
@@ -4587,7 +4590,7 @@ err_list_del:
 err_free_id:
 	cgroup_idr_remove(&ss->css_idr, css->id);
 err_free_percpu_ref:
-	percpu_ref_cancel_init(&css->refcnt);
+	percpu_ref_exit(&css->refcnt);
 err_free_css:
 	call_rcu(&css->rcu_head, css_free_rcu_fn);
 	return err;
@@ -4620,7 +4623,7 @@ static int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name,
 		goto out_unlock;
 	}
 
-	ret = percpu_ref_init(&cgrp->self.refcnt, css_release);
+	ret = percpu_ref_init(&cgrp->self.refcnt, css_release, 0, GFP_KERNEL);
 	if (ret)
 		goto out_free_cgrp;
 
@@ -4712,7 +4715,7 @@ static int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name,
 out_free_id:
 	cgroup_idr_remove(&root->cgroup_idr, cgrp->id);
 out_cancel_ref:
-	percpu_ref_cancel_init(&cgrp->self.refcnt);
+	percpu_ref_exit(&cgrp->self.refcnt);
 out_free_cgrp:
 	kfree(cgrp);
 out_unlock:
