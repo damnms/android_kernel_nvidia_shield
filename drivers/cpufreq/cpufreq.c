@@ -830,6 +830,42 @@ static int cpufreq_add_dev_symlink(unsigned int cpu,
 	return ret;
 }
 
+/*
+ * Linux 4.3+ and Android's libtimeinstate expect every policy at
+ * /sys/devices/system/cpu/cpufreq/policyN, N being the first CPU of
+ * the policy. Here the policy directory stays below cpuN/cpufreq, so
+ * add a link to it. related_cpus does not change while the policy
+ * exists; policy_link_mask records which links were created.
+ */
+static struct cpumask policy_link_mask;
+
+static void cpufreq_add_policy_link(struct cpufreq_policy *policy)
+{
+	unsigned int first = cpumask_first(policy->related_cpus);
+	char name[16];
+
+	if (cpufreq_get_global_kobject())
+		return;
+	snprintf(name, sizeof(name), "policy%u", first);
+	if (sysfs_create_link(cpufreq_global_kobject, &policy->kobj, name)) {
+		cpufreq_put_global_kobject();
+		return;
+	}
+	cpumask_set_cpu(first, &policy_link_mask);
+}
+
+static void cpufreq_remove_policy_link(struct cpufreq_policy *policy)
+{
+	unsigned int first = cpumask_first(policy->related_cpus);
+	char name[16];
+
+	if (!cpumask_test_and_clear_cpu(first, &policy_link_mask))
+		return;
+	snprintf(name, sizeof(name), "policy%u", first);
+	sysfs_remove_link(cpufreq_global_kobject, name);
+	cpufreq_put_global_kobject();
+}
+
 static int cpufreq_add_dev_interface(unsigned int cpu,
 				     struct cpufreq_policy *policy,
 				     struct device *dev)
@@ -845,6 +881,8 @@ static int cpufreq_add_dev_interface(unsigned int cpu,
 				   &dev->kobj, "cpufreq");
 	if (ret)
 		return ret;
+
+	cpufreq_add_policy_link(policy);
 
 	/* set up files for this cpu device */
 	drv_attr = cpufreq_driver->attr;
@@ -898,6 +936,7 @@ static int cpufreq_add_dev_interface(unsigned int cpu,
 	return ret;
 
 err_out_kobj_put:
+	cpufreq_remove_policy_link(policy);
 	kobject_put(&policy->kobj);
 	wait_for_completion(&policy->kobj_unregister);
 	return ret;
@@ -1065,6 +1104,8 @@ err_out_unregister:
 		per_cpu(cpufreq_cpu_data, j) = NULL;
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
+	cpufreq_remove_policy_link(policy);
+
 	kobject_put(&policy->kobj);
 	wait_for_completion(&policy->kobj_unregister);
 
@@ -1177,6 +1218,8 @@ static int __cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif
 	if (cpus == 1) {
 		if (cpufreq_driver->target)
 			__cpufreq_governor(data, CPUFREQ_GOV_POLICY_EXIT);
+
+		cpufreq_remove_policy_link(data);
 
 		lock_policy_rwsem_read(cpu);
 		kobj = &data->kobj;
