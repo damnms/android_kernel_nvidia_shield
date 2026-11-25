@@ -64,9 +64,22 @@ struct perf_callchain_entry_ctx {
 	u32			    max_stack;
 };
 
-struct perf_raw_record {
-	u32				size;
+typedef unsigned long (*perf_copy_f)(void *dst, const void *src,
+				     unsigned long off, unsigned long len);
+
+struct perf_raw_frag {
+	union {
+		struct perf_raw_frag	*next;
+		unsigned long		pad;
+	};
+	perf_copy_f			copy;
 	void				*data;
+	u32				size;
+} __packed;
+
+struct perf_raw_record {
+	struct perf_raw_frag		frag;
+	u32				size;
 };
 
 /*
@@ -418,6 +431,10 @@ struct perf_event {
 
 	perf_overflow_handler_t		overflow_handler;
 	void				*overflow_handler_context;
+#ifdef CONFIG_BPF_SYSCALL
+	perf_overflow_handler_t		orig_overflow_handler;
+	struct bpf_prog			*prog;
+#endif
 
 #ifdef CONFIG_EVENT_TRACING
 	struct ftrace_event_call	*tp_event;
@@ -613,6 +630,12 @@ extern int perf_event_overflow(struct perf_event *event,
 extern void perf_event_output(struct perf_event *event,
 				struct perf_sample_data *data,
 				struct pt_regs *regs);
+
+static inline bool
+is_default_overflow_handler(struct perf_event *event)
+{
+	return (event->overflow_handler == perf_event_output);
+}
 
 static inline bool is_sampling_event(struct perf_event *event)
 {
@@ -855,6 +878,11 @@ extern void perf_restore_debug_store(void);
 #else
 static inline void perf_restore_debug_store(void)			{ }
 #endif
+
+static __always_inline bool perf_raw_frag_last(const struct perf_raw_frag *frag)
+{
+	return frag->pad < sizeof(u64);
+}
 
 #define perf_output_put(handle, x) perf_output_copy((handle), &(x), sizeof(x))
 

@@ -687,7 +687,7 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 #endif
 	memcpy(new->cb, old->cb, sizeof(old->cb));
 	new->csum		= old->csum;
-	new->local_df		= old->local_df;
+	new->ignore_df		= old->ignore_df;
 	new->pkt_type		= old->pkt_type;
 	new->ip_summed		= old->ip_summed;
 	skb_copy_queue_mapping(new, old);
@@ -3503,7 +3503,7 @@ unsigned int skb_gso_transport_seglen(const struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(skb_gso_transport_seglen);
 
-static int make_writable(struct sk_buff *skb, int write_len)
+int skb_ensure_writable(struct sk_buff *skb, int write_len)
 {
 	if (!pskb_may_pull(skb, write_len))
 		return -ENOMEM;
@@ -3520,7 +3520,7 @@ static int __pop_vlan_tci(struct sk_buff *skb, __be16 *current_tci)
 	struct vlan_hdr *vhdr;
 	int err;
 
-	err = make_writable(skb, VLAN_ETH_HLEN);
+	err = skb_ensure_writable(skb, VLAN_ETH_HLEN);
 	if (unlikely(err))
 		return err;
 
