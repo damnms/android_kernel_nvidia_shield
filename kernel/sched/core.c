@@ -7811,7 +7811,7 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 static int cpu_cgroup_css_online(struct cgroup_subsys_state *css)
 {
 	struct task_group *tg = css_tg(css);
-	struct task_group *parent = css_tg(css_parent(css));
+	struct task_group *parent = css_tg(css->parent);
 
 	if (parent)
 		sched_online_group(tg, parent);
@@ -7837,7 +7837,7 @@ static int cpu_cgroup_can_attach(struct cgroup_subsys_state *css,
 {
 	struct task_struct *task;
 
-	cgroup_taskset_for_each(task, css, tset) {
+	cgroup_taskset_for_each(task, tset) {
 #ifdef CONFIG_RT_GROUP_SCHED
 		if (!sched_rt_can_attach(css_tg(css), task))
 			return -EINVAL;
@@ -7855,7 +7855,7 @@ static void cpu_cgroup_attach(struct cgroup_subsys_state *css,
 {
 	struct task_struct *task;
 
-	cgroup_taskset_for_each(task, css, tset)
+	cgroup_taskset_for_each(task, tset)
 		sched_move_task(task);
 }
 
@@ -8203,7 +8203,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 	.attach		= cpu_cgroup_attach,
 	.allow_attach	= subsys_cgroup_allow_attach,
 	.exit		= cpu_cgroup_exit,
-	.base_cftypes	= cpu_files,
+	.legacy_cftypes	= cpu_files,
 	.early_init	= 1,
 };
 

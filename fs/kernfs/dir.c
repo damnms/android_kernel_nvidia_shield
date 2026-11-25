@@ -112,6 +112,7 @@ char *kernfs_path(struct kernfs_node *kn, char *buf, size_t buflen)
 	spin_unlock_irqrestore(&kernfs_rename_lock, flags);
 	return p;
 }
+EXPORT_SYMBOL_GPL(kernfs_path);
 
 /**
  * pr_cont_kernfs_name - pr_cont name of a kernfs_node
@@ -190,7 +191,7 @@ static unsigned int kernfs_name_hash(const char *name, const void *ns)
 	hash = (end_name_hash(hash) ^ hash_ptr((void *)ns, 31));
 	hash &= 0x7fffffffU;
 	/* Reserve hash numbers 0, 1 and INT_MAX for magic directory entries */
-	if (hash < 1)
+	if (hash < 2)
 		hash += 2;
 	if (hash >= INT_MAX)
 		hash = INT_MAX - 1;
@@ -231,9 +232,6 @@ static int kernfs_link_sibling(struct kernfs_node *kn)
 	struct rb_node **node = &kn->parent->dir.children.rb_node;
 	struct rb_node *parent = NULL;
 
-	if (kernfs_type(kn) == KERNFS_DIR)
-		kn->parent->dir.subdirs++;
-
 	while (*node) {
 		struct kernfs_node *pos;
 		int result;
@@ -248,9 +246,15 @@ static int kernfs_link_sibling(struct kernfs_node *kn)
 		else
 			return -EEXIST;
 	}
+
 	/* add new node and rebalance the tree */
 	rb_link_node(&kn->rb, parent, node);
 	rb_insert_color(&kn->rb, &kn->parent->dir.children);
+
+	/* successfully added, account subdir number */
+	if (kernfs_type(kn) == KERNFS_DIR)
+		kn->parent->dir.subdirs++;
+
 	return 0;
 }
 
@@ -489,7 +493,7 @@ const struct dentry_operations kernfs_dops = {
  */
 struct kernfs_node *kernfs_node_from_dentry(struct dentry *dentry)
 {
-	if (dentry->d_op == &kernfs_dops)
+	if (dentry->d_sb->s_op == &kernfs_sops)
 		return dentry->d_fsdata;
 	return NULL;
 }
@@ -699,6 +703,7 @@ struct kernfs_root *kernfs_create_root(struct kernfs_syscall_ops *scops,
 		return ERR_PTR(-ENOMEM);
 
 	ida_init(&root->ino_ida);
+	INIT_LIST_HEAD(&root->supers);
 
 	kn = __kernfs_new_node(root, "", S_IFDIR | S_IRUGO | S_IXUGO,
 			       KERNFS_DIR);
@@ -802,7 +807,7 @@ static struct dentry *kernfs_iop_lookup(struct inode *dir,
 	}
 
 	/* instantiate and hash dentry */
-	ret = d_materialise_unique(dentry, inode);
+	ret = d_splice_alias(inode, dentry);
  out_unlock:
 	mutex_unlock(&kernfs_mutex);
 	return ret;
@@ -1284,7 +1289,7 @@ int kernfs_rename_ns(struct kernfs_node *kn, struct kernfs_node *new_parent,
 
 	spin_unlock_irq(&kernfs_rename_lock);
 
-	kn->hash = kernfs_name_hash(new_name, new_ns);
+	kn->hash = kernfs_name_hash(kn->name, kn->ns);
 	kernfs_link_sibling(kn);
 
 	kernfs_put(old_parent);
