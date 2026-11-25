@@ -11,6 +11,7 @@ struct trace_array;
 struct trace_buffer;
 struct tracer;
 struct dentry;
+struct bpf_prog;
 
 struct trace_print_flags {
 	unsigned long		mask;
@@ -202,6 +203,7 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER_BIT,
 	TRACE_EVENT_FL_IGNORE_ENABLE_BIT,
 	TRACE_EVENT_FL_WAS_ENABLED_BIT,
+	TRACE_EVENT_FL_KPROBE_BIT,
 };
 
 /*
@@ -213,6 +215,7 @@ enum {
  *  WAS_ENABLED   - Set and stays set when an event was ever enabled
  *                    (used for module unloading, if a module event is enabled,
  *                     it is best to clear the buffers that used it).
+ *  KPROBE        - Event is a kprobe
  */
 enum {
 	TRACE_EVENT_FL_FILTERED		= (1 << TRACE_EVENT_FL_FILTERED_BIT),
@@ -220,6 +223,7 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER	= (1 << TRACE_EVENT_FL_NO_SET_FILTER_BIT),
 	TRACE_EVENT_FL_IGNORE_ENABLE	= (1 << TRACE_EVENT_FL_IGNORE_ENABLE_BIT),
 	TRACE_EVENT_FL_WAS_ENABLED	= (1 << TRACE_EVENT_FL_WAS_ENABLED_BIT),
+	TRACE_EVENT_FL_KPROBE		= (1 << TRACE_EVENT_FL_KPROBE_BIT),
 };
 
 struct ftrace_event_call {
@@ -244,6 +248,7 @@ struct ftrace_event_call {
 #ifdef CONFIG_PERF_EVENTS
 	int				perf_refcount;
 	struct hlist_head __percpu	*perf_events;
+	struct bpf_prog			*prog;
 #endif
 };
 
@@ -316,6 +321,15 @@ extern int filter_current_check_discard(struct ring_buffer *buffer,
 					struct ftrace_event_call *call,
 					void *rec,
 					struct ring_buffer_event *event);
+
+#ifdef CONFIG_BPF_SYSCALL
+unsigned int trace_call_bpf(struct bpf_prog *prog, void *ctx);
+#else
+static inline unsigned int trace_call_bpf(struct bpf_prog *prog, void *ctx)
+{
+	return 1;
+}
+#endif
 
 enum {
 	FILTER_OTHER = 0,
