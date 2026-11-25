@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
+#include <linux/completion.h>
 
 /*
  * Autoloaded crypto modules should only use a prefixed name to avoid allowing
@@ -1302,6 +1303,39 @@ static inline int crypto_comp_decompress(struct crypto_comp *tfm,
 {
 	return crypto_comp_crt(tfm)->cot_decompress(crypto_comp_tfm(tfm),
 						    src, slen, dst, dlen);
+}
+
+/*
+ * Async ops completion helper functions
+ */
+void crypto_req_done(struct crypto_async_request *req, int err);
+
+struct crypto_wait {
+	struct completion completion;
+	int err;
+};
+
+#define DECLARE_CRYPTO_WAIT(_wait) \
+	struct crypto_wait _wait = { \
+		COMPLETION_INITIALIZER_ONSTACK((_wait).completion), 0 }
+
+static inline int crypto_wait_req(int err, struct crypto_wait *wait)
+{
+	switch (err) {
+	case -EINPROGRESS:
+	case -EBUSY:
+		wait_for_completion(&wait->completion);
+		reinit_completion(&wait->completion);
+		err = wait->err;
+		break;
+	};
+
+	return err;
+}
+
+static inline void crypto_init_wait(struct crypto_wait *wait)
+{
+	init_completion(&wait->completion);
 }
 
 #endif	/* _LINUX_CRYPTO_H */
