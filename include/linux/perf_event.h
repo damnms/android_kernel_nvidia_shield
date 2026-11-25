@@ -56,7 +56,12 @@ struct perf_guest_info_callbacks {
 
 struct perf_callchain_entry {
 	__u64				nr;
-	__u64				ip[PERF_MAX_STACK_DEPTH];
+	__u64				ip[0]; /* /proc/sys/kernel/perf_event_max_stack */
+};
+
+struct perf_callchain_entry_ctx {
+	struct perf_callchain_entry *entry;
+	u32			    max_stack;
 };
 
 struct perf_raw_record {
@@ -137,7 +142,6 @@ struct hw_perf_event {
 			struct hrtimer	hrtimer;
 		};
 		struct { /* tracepoint */
-			struct task_struct	*tp_target;
 			/* for tp_event->class */
 			struct list_head	tp_list;
 		};
@@ -148,12 +152,12 @@ struct hw_perf_event {
 			 * problem hw_breakpoint has with context
 			 * creation and event initalization.
 			 */
-			struct task_struct		*bp_target;
 			struct arch_hw_breakpoint	info;
 			struct list_head		bp_list;
 		};
 #endif
 	};
+	struct task_struct		*target;
 	int				state;
 	local64_t			prev_count;
 	u64				sample_period;
@@ -510,6 +514,10 @@ struct perf_output_handle {
 	int				page;
 };
 
+struct bpf_perf_event_data_kern {
+	struct pt_regs *regs;
+	struct perf_sample_data *data;
+};
 #ifdef CONFIG_PERF_EVENTS
 
 extern int perf_pmu_register(struct pmu *pmu, char *name, int type);
@@ -525,6 +533,8 @@ extern int perf_event_init_task(struct task_struct *child);
 extern void perf_event_exit_task(struct task_struct *child);
 extern void perf_event_free_task(struct task_struct *task);
 extern void perf_event_delayed_put(struct task_struct *task);
+extern struct file *perf_event_get(unsigned int fd);
+extern const struct perf_event_attr *perf_event_attrs(struct perf_event *event);
 extern void perf_event_print_debug(void);
 extern void perf_pmu_disable(struct pmu *pmu);
 extern void perf_pmu_enable(struct pmu *pmu);
@@ -541,6 +551,7 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr,
 				void *context);
 extern void perf_pmu_migrate_context(struct pmu *pmu,
 				int src_cpu, int dst_cpu);
+extern u64 perf_event_read_local(struct perf_event *event);
 extern u64 perf_event_read_value(struct perf_event *event,
 				 u64 *enabled, u64 *running);
 
@@ -599,6 +610,10 @@ extern int perf_event_overflow(struct perf_event *event,
 				 struct perf_sample_data *data,
 				 struct pt_regs *regs);
 
+extern void perf_event_output(struct perf_event *event,
+				struct perf_sample_data *data,
+				struct pt_regs *regs);
+
 static inline bool is_sampling_event(struct perf_event *event)
 {
 	return event->attr.sample_period != 0;
@@ -614,6 +629,7 @@ static inline int is_software_event(struct perf_event *event)
 
 extern struct static_key perf_swevent_enabled[PERF_COUNT_SW_MAX];
 
+extern void ___perf_sw_event(u32, u64, struct pt_regs *, u64);
 extern void __perf_sw_event(u32, u64, struct pt_regs *, u64);
 
 #ifndef perf_arch_fetch_caller_regs
@@ -638,14 +654,25 @@ static inline void perf_fetch_caller_regs(struct pt_regs *regs)
 static __always_inline void
 perf_sw_event(u32 event_id, u64 nr, struct pt_regs *regs, u64 addr)
 {
-	struct pt_regs hot_regs;
-
-	if (static_key_false(&perf_swevent_enabled[event_id])) {
-		if (!regs) {
-			perf_fetch_caller_regs(&hot_regs);
-			regs = &hot_regs;
-		}
+	if (static_key_false(&perf_swevent_enabled[event_id]))
 		__perf_sw_event(event_id, nr, regs, addr);
+}
+
+DECLARE_PER_CPU(struct pt_regs, __perf_regs[4]);
+
+/*
+ * 'Special' version for the scheduler, it hard assumes no recursion,
+ * which is guaranteed by us not actually scheduling inside other swevents
+ * because those disable preemption.
+ */
+static __always_inline void
+perf_sw_event_sched(u32 event_id, u64 nr, u64 addr)
+{
+	if (static_key_false(&perf_swevent_enabled[event_id])) {
+		struct pt_regs *regs = this_cpu_ptr(&__perf_regs[0]);
+
+		perf_fetch_caller_regs(regs);
+		___perf_sw_event(event_id, nr, regs, addr);
 	}
 }
 
@@ -661,7 +688,7 @@ static inline void perf_event_task_sched_in(struct task_struct *prev,
 static inline void perf_event_task_sched_out(struct task_struct *prev,
 					     struct task_struct *next)
 {
-	perf_sw_event(PERF_COUNT_SW_CONTEXT_SWITCHES, 1, NULL, 0);
+	perf_sw_event_sched(PERF_COUNT_SW_CONTEXT_SWITCHES, 1, 0);
 
 	if (static_key_false(&perf_sched_events.key))
 		__perf_event_task_sched_out(prev, next);
@@ -678,13 +705,25 @@ extern void perf_event_fork(struct task_struct *tsk);
 /* Callchains */
 DECLARE_PER_CPU(struct perf_callchain_entry, perf_callchain_entry);
 
-extern void perf_callchain_user(struct perf_callchain_entry *entry, struct pt_regs *regs);
-extern void perf_callchain_kernel(struct perf_callchain_entry *entry, struct pt_regs *regs);
+extern void perf_callchain_user(struct perf_callchain_entry_ctx *entry, struct pt_regs *regs);
+extern void perf_callchain_kernel(struct perf_callchain_entry_ctx *entry, struct pt_regs *regs);
+extern struct perf_callchain_entry *
+get_perf_callchain(struct pt_regs *regs, u32 init_nr, bool kernel, bool user,
+		   u32 max_stack, bool crosstask, bool add_mark);
+extern int get_callchain_buffers(int max_stack);
+extern void put_callchain_buffers(void);
 
-static inline void perf_callchain_store(struct perf_callchain_entry *entry, u64 ip)
+extern int sysctl_perf_event_max_stack;
+
+static inline int perf_callchain_store(struct perf_callchain_entry_ctx *ctx, u64 ip)
 {
-	if (entry->nr < PERF_MAX_STACK_DEPTH)
+	struct perf_callchain_entry *entry = ctx->entry;
+	if (entry->nr < ctx->max_stack) {
 		entry->ip[entry->nr++] = ip;
+		return 0;
+	} else {
+		return -1; /* no more room, stop walking the stack */
+	}
 }
 
 extern int sysctl_perf_event_paranoid;
@@ -701,6 +740,8 @@ extern int perf_cpu_time_max_percent_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp,
 		loff_t *ppos);
 
+int perf_event_max_stack_handler(struct ctl_table *table, int write,
+				 void __user *buffer, size_t *lenp, loff_t *ppos);
 
 static inline bool perf_paranoid_any(void)
 {
@@ -723,7 +764,7 @@ static inline bool perf_paranoid_kernel(void)
 }
 
 extern void perf_event_init(void);
-extern void perf_tp_event(u64 addr, u64 count, void *record,
+extern void perf_tp_event(u16 event_type, u64 count, void *record,
 			  int entry_size, struct pt_regs *regs,
 			  struct hlist_head *head, int rctx,
 			  struct task_struct *task);
@@ -764,6 +805,12 @@ static inline int perf_event_init_task(struct task_struct *child)	{ return 0; }
 static inline void perf_event_exit_task(struct task_struct *child)	{ }
 static inline void perf_event_free_task(struct task_struct *task)	{ }
 static inline void perf_event_delayed_put(struct task_struct *task)	{ }
+static inline struct file *perf_event_get(unsigned int fd)	{ return ERR_PTR(-EINVAL); }
+static inline const struct perf_event_attr *perf_event_attrs(struct perf_event *event)
+{
+	return ERR_PTR(-EINVAL);
+}
+static inline u64 perf_event_read_local(struct perf_event *event)	{ return -EINVAL; }
 static inline void perf_event_print_debug(void)				{ }
 static inline int perf_event_task_disable(void)				{ return -EINVAL; }
 static inline int perf_event_task_enable(void)				{ return -EINVAL; }
@@ -774,6 +821,8 @@ static inline int perf_event_refresh(struct perf_event *event, int refresh)
 
 static inline void
 perf_sw_event(u32 event_id, u64 nr, struct pt_regs *regs, u64 addr)	{ }
+static inline void
+perf_sw_event_sched(u32 event_id, u64 nr, u64 addr)			{ }
 static inline void
 perf_bp_event(struct perf_event *event, void *data)			{ }
 
@@ -792,6 +841,7 @@ static inline void perf_event_enable(struct perf_event *event)		{ }
 static inline void perf_event_disable(struct perf_event *event)		{ }
 static inline int __perf_event_disable(void *info)			{ return -1; }
 static inline void perf_event_task_tick(void)				{ }
+static inline int perf_event_release_kernel(struct perf_event *event)	{ return 0; }
 #endif
 
 #if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_NO_HZ_FULL)

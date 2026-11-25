@@ -109,6 +109,8 @@ enum perf_sw_ids {
 	PERF_COUNT_SW_PAGE_FAULTS_MAJ		= 6,
 	PERF_COUNT_SW_ALIGNMENT_FAULTS		= 7,
 	PERF_COUNT_SW_EMULATION_FAULTS		= 8,
+	PERF_COUNT_SW_DUMMY			= 9,
+	PERF_COUNT_SW_BPF_OUTPUT		= 10,
 
 	PERF_COUNT_SW_MAX,			/* non-ABI */
 };
@@ -212,6 +214,9 @@ enum perf_event_read_format {
 
 /*
  * Hardware event_id to monitor via a performance monitoring event:
+ *
+ * @sample_max_stack: Max number of frame pointers in a callchain,
+ *		      should be < /proc/sys/kernel/perf_event_max_stack
  */
 struct perf_event_attr {
 
@@ -303,7 +308,8 @@ struct perf_event_attr {
 	__u32	sample_stack_user;
 
 	/* Align to u64. */
-	__u32	__reserved_2;
+        __u16   sample_max_stack;
+        __u16   __reserved_2;   /* align to __u64 */
 };
 
 #define perf_flags(attr)	(*(&(attr)->read_format + 1))

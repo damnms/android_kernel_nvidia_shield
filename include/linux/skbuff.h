@@ -1864,7 +1864,7 @@ static inline int pskb_network_may_pull(struct sk_buff *skb, unsigned int len)
 
 extern int ___pskb_trim(struct sk_buff *skb, unsigned int len);
 
-static inline void __skb_trim(struct sk_buff *skb, unsigned int len)
+static inline void __skb_set_length(struct sk_buff *skb, unsigned int len)
 {
 	if (unlikely(skb_is_nonlinear(skb))) {
 		WARN_ON(1);
@@ -1872,6 +1872,11 @@ static inline void __skb_trim(struct sk_buff *skb, unsigned int len)
 	}
 	skb->len = len;
 	skb_set_tail_pointer(skb, len);
+}
+
+static inline void __skb_trim(struct sk_buff *skb, unsigned int len)
+{
+       __skb_set_length(skb, len);
 }
 
 extern void skb_trim(struct sk_buff *skb, unsigned int len);
@@ -1882,6 +1887,20 @@ static inline int __pskb_trim(struct sk_buff *skb, unsigned int len)
 		return ___pskb_trim(skb, len);
 	__skb_trim(skb, len);
 	return 0;
+}
+
+static inline int __skb_grow(struct sk_buff *skb, unsigned int len)
+{
+       unsigned int diff = len - skb->len;
+
+       if (skb_tailroom(skb) < diff) {
+               int ret = pskb_expand_head(skb, 0, diff - skb_tailroom(skb),
+                                          GFP_ATOMIC);
+               if (ret)
+                       return ret;
+       }
+       __skb_set_length(skb, len);
+       return 0;
 }
 
 static inline int pskb_trim(struct sk_buff *skb, unsigned int len)
@@ -2217,6 +2236,13 @@ static inline int skb_clone_writable(const struct sk_buff *skb, unsigned int len
 	       skb_headroom(skb) + len <= skb->hdr_len;
 }
 
+static inline int skb_try_make_writable(struct sk_buff *skb,
+					unsigned int write_len)
+{
+	return skb_cloned(skb) && !skb_clone_writable(skb, write_len) &&
+	       pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+}
+
 static inline int __skb_cow(struct sk_buff *skb, unsigned int headroom,
 			    int cloned)
 {
@@ -2380,6 +2406,23 @@ static inline void skb_postpull_rcsum(struct sk_buff *skb,
 
 unsigned char *skb_pull_rcsum(struct sk_buff *skb, unsigned int len);
 
+static inline void skb_postpush_rcsum(struct sk_buff *skb,
+				      const void *start, unsigned int len)
+{
+	/* For performing the reverse operation to skb_postpull_rcsum(),
+	 * we can instead of ...
+	 *
+	 *   skb->csum = csum_add(skb->csum, csum_partial(start, len, 0));
+	 *
+	 * ... just use this equivalent version here to save a few
+	 * instructions. Feeding csum of 0 in csum_partial() and later
+	 * on adding skb->csum is equivalent to feed skb->csum in the
+	 * first place.
+	 */
+	if (skb->ip_summed == CHECKSUM_COMPLETE)
+		skb->csum = csum_partial(start, len, skb->csum);
+}
+
 /**
  *	pskb_trim_rcsum - trim received skb and update checksum
  *	@skb: buffer to trim
@@ -2431,6 +2474,21 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
 		for (tmp = skb->prev;						\
 		     skb != (struct sk_buff *)(queue);				\
 		     skb = tmp, tmp = skb->prev)
+
+static inline int __skb_trim_rcsum(struct sk_buff *skb, unsigned int len)
+{
+       if (skb->ip_summed == CHECKSUM_COMPLETE)
+               skb->ip_summed = CHECKSUM_NONE;
+       __skb_trim(skb, len);
+       return 0;
+}
+
+static inline int __skb_grow_rcsum(struct sk_buff *skb, unsigned int len)
+{
+       if (skb->ip_summed == CHECKSUM_COMPLETE)
+               skb->ip_summed = CHECKSUM_NONE;
+       return __skb_grow(skb, len);
+}
 
 static inline bool skb_has_frag_list(const struct sk_buff *skb)
 {
@@ -2502,6 +2560,8 @@ extern struct sk_buff *skb_segment(struct sk_buff *skb,
 				   netdev_features_t features);
 
 unsigned int skb_gso_transport_seglen(const struct sk_buff *skb);
+int skb_vlan_pop(struct sk_buff *skb);
+int skb_vlan_push(struct sk_buff *skb, __be16 vlan_proto, u16 vlan_tci);
 
 static inline void *skb_header_pointer(const struct sk_buff *skb, int offset,
 				       int len, void *buffer)
@@ -2869,6 +2929,13 @@ static inline bool skb_is_gso_v6(const struct sk_buff *skb)
 	return skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6;
 }
 
+static inline void skb_gso_reset(struct sk_buff *skb)
+{
+       skb_shinfo(skb)->gso_size = 0;
+       skb_shinfo(skb)->gso_segs = 0;
+       skb_shinfo(skb)->gso_type = 0;
+}
+
 extern void __skb_warn_lro_forwarding(const struct sk_buff *skb);
 
 static inline bool skb_warn_if_lro(const struct sk_buff *skb)
@@ -2940,6 +3007,10 @@ static inline unsigned int skb_gso_network_seglen(const struct sk_buff *skb)
 	unsigned int hdr_len = skb_transport_header(skb) -
 			       skb_network_header(skb);
 	return hdr_len + skb_gso_transport_seglen(skb);
+}
+
+static inline void skb_sender_cpu_clear(struct sk_buff *skb)
+{
 }
 #endif	/* __KERNEL__ */
 #endif	/* _LINUX_SKBUFF_H */

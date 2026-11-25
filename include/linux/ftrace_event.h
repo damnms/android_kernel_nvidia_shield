@@ -6,6 +6,7 @@
 #include <linux/percpu.h>
 #include <linux/hardirq.h>
 #include <linux/perf_event.h>
+#include <linux/tracepoint.h>
 
 struct trace_array;
 struct trace_buffer;
@@ -203,7 +204,9 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER_BIT,
 	TRACE_EVENT_FL_IGNORE_ENABLE_BIT,
 	TRACE_EVENT_FL_WAS_ENABLED_BIT,
+	TRACE_EVENT_FL_TRACEPOINT_BIT,
 	TRACE_EVENT_FL_KPROBE_BIT,
+	TRACE_EVENT_FL_UPROBE_BIT,
 };
 
 /*
@@ -215,7 +218,9 @@ enum {
  *  WAS_ENABLED   - Set and stays set when an event was ever enabled
  *                    (used for module unloading, if a module event is enabled,
  *                     it is best to clear the buffers that used it).
+ *  TRACEPOINT    - Event is a tracepoint
  *  KPROBE        - Event is a kprobe
+ *  UPROBE        - Event is a uprobe
  */
 enum {
 	TRACE_EVENT_FL_FILTERED		= (1 << TRACE_EVENT_FL_FILTERED_BIT),
@@ -223,13 +228,21 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER	= (1 << TRACE_EVENT_FL_NO_SET_FILTER_BIT),
 	TRACE_EVENT_FL_IGNORE_ENABLE	= (1 << TRACE_EVENT_FL_IGNORE_ENABLE_BIT),
 	TRACE_EVENT_FL_WAS_ENABLED	= (1 << TRACE_EVENT_FL_WAS_ENABLED_BIT),
+	TRACE_EVENT_FL_TRACEPOINT	= (1 << TRACE_EVENT_FL_TRACEPOINT_BIT),
 	TRACE_EVENT_FL_KPROBE		= (1 << TRACE_EVENT_FL_KPROBE_BIT),
+	TRACE_EVENT_FL_UPROBE           = (1 << TRACE_EVENT_FL_UPROBE_BIT),
 };
+
+#define TRACE_EVENT_FL_UKPROBE (TRACE_EVENT_FL_KPROBE | TRACE_EVENT_FL_UPROBE)
 
 struct ftrace_event_call {
 	struct list_head	list;
 	struct ftrace_event_class *class;
-	char			*name;
+	union {
+		char			*name;
+		/* Set TRACE_EVENT_FL_TRACEPOINT flag when using "tp" */
+		struct tracepoint	*tp;
+	};
 	struct trace_event	event;
 	const char		*print_fmt;
 	struct event_filter	*filter;
@@ -242,6 +255,7 @@ struct ftrace_event_call {
 	 *   bit 2:		failed to apply filter
 	 *   bit 3:		ftrace internal event (do not enable)
 	 *   bit 4:		Event was enabled by module
+	 *   bit 5:		Event is a tracepoint
 	 */
 	int			flags; /* static flags of different events */
 
@@ -251,6 +265,15 @@ struct ftrace_event_call {
 	struct bpf_prog			*prog;
 #endif
 };
+
+static inline const char *
+ftrace_event_name(struct ftrace_event_call *call)
+{
+	if (call->flags & TRACE_EVENT_FL_TRACEPOINT)
+		return call->tp ? call->tp->name : NULL;
+	else
+		return call->name;
+}
 
 struct trace_array;
 struct ftrace_subsystem_dir;
@@ -306,7 +329,7 @@ struct ftrace_event_file {
 #define __TRACE_EVENT_FLAGS(name, value)				\
 	static int __init trace_init_flags_##name(void)			\
 	{								\
-		event_##name.flags = value;				\
+		event_##name.flags |= value;				\
 		return 0;						\
 	}								\
 	early_initcall(trace_init_flags_##name);
@@ -345,6 +368,7 @@ extern int trace_define_field(struct ftrace_event_call *call, const char *type,
 			      int is_signed, int filter_type);
 extern int trace_add_event_call(struct ftrace_event_call *call);
 extern int trace_remove_event_call(struct ftrace_event_call *call);
+extern int trace_event_get_offsets(struct ftrace_event_call *call);
 
 #define is_signed_type(type)	(((type)(-1)) < (type)1)
 
@@ -415,15 +439,15 @@ extern void perf_trace_del(struct perf_event *event, int flags);
 extern int  ftrace_profile_set_filter(struct perf_event *event, int event_id,
 				     char *filter_str);
 extern void ftrace_profile_free_filter(struct perf_event *event);
-extern void *perf_trace_buf_prepare(int size, unsigned short type,
-				    struct pt_regs *regs, int *rctxp);
+void perf_trace_buf_update(void *record, u16 type);
+void *perf_trace_buf_alloc(int size, struct pt_regs **regs, int *rctxp);
 
 static inline void
-perf_trace_buf_submit(void *raw_data, int size, int rctx, u64 addr,
+perf_trace_buf_submit(void *raw_data, int size, int rctx, u16 type,
 		       u64 count, struct pt_regs *regs, void *head,
 		       struct task_struct *task)
 {
-	perf_tp_event(addr, count, raw_data, size, regs, head, rctx, task);
+	perf_tp_event(type, count, raw_data, size, regs, head, rctx, task);
 }
 #endif
 
