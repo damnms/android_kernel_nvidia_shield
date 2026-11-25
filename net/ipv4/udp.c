@@ -1420,6 +1420,20 @@ int udp_disconnect(struct sock *sk, int flags)
 }
 EXPORT_SYMBOL(udp_disconnect);
 
+int udp_abort(struct sock *sk, int err)
+{
+	lock_sock(sk);
+
+	sk->sk_err = err;
+	sk->sk_error_report(sk);
+	udp_disconnect(sk, 0);
+
+	release_sock(sk);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(udp_abort);
+
 void udp_lib_unhash(struct sock *sk)
 {
 	if (sk_hashed(sk)) {
@@ -2123,6 +2137,7 @@ struct proto udp_prot = {
 	.compat_getsockopt = compat_udp_getsockopt,
 #endif
 	.clear_sk	   = sk_prot_clear_portaddr_nulls,
+	.diag_destroy	   = udp_abort,
 };
 EXPORT_SYMBOL(udp_prot);
 
