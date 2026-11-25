@@ -13,7 +13,6 @@
 #include <linux/nodemask.h>
 #include <linux/rculist.h>
 #include <linux/cgroupstats.h>
-#include <linux/rwsem.h>
 #include <linux/fs.h>
 #include <linux/seq_file.h>
 #include <linux/kernfs.h>
@@ -42,6 +41,10 @@ struct css_task_iter {
 	struct list_head		*task_pos;
 	struct list_head		*tasks_head;
 	struct list_head		*mg_tasks_head;
+
+	struct css_set			*cur_cset;
+	struct task_struct		*cur_task;
+	struct list_head		iters_node;	/* css_set->task_iters */
 };
 
 extern struct cgroup_root cgrp_dfl_root;
@@ -85,6 +88,7 @@ int cgroup_transfer_tasks(struct cgroup *to, struct cgroup *from);
 int cgroup_add_dfl_cftypes(struct cgroup_subsys *ss, struct cftype *cfts);
 int cgroup_add_legacy_cftypes(struct cgroup_subsys *ss, struct cftype *cfts);
 int cgroup_rm_cftypes(struct cftype *cfts);
+void cgroup_file_notify(struct cgroup_file *cfile);
 
 char *task_cgroup_path(struct task_struct *task, char *buf, size_t buflen);
 int cgroupstats_build(struct cgroupstats *stats, struct dentry *dentry);
@@ -99,6 +103,7 @@ extern void cgroup_cancel_fork(struct task_struct *p,
 extern void cgroup_post_fork(struct task_struct *p,
 			     void *old_ss_priv[CGROUP_CANFORK_COUNT]);
 void cgroup_exit(struct task_struct *p);
+void cgroup_free(struct task_struct *p);
 
 int cgroup_init_early(void);
 int cgroup_init(void);
@@ -115,8 +120,10 @@ struct cgroup_subsys_state *css_rightmost_descendant(struct cgroup_subsys_state 
 struct cgroup_subsys_state *css_next_descendant_post(struct cgroup_subsys_state *pos,
 						     struct cgroup_subsys_state *css);
 
-struct task_struct *cgroup_taskset_first(struct cgroup_taskset *tset);
-struct task_struct *cgroup_taskset_next(struct cgroup_taskset *tset);
+struct task_struct *cgroup_taskset_first(struct cgroup_taskset *tset,
+					 struct cgroup_subsys_state **dst_cssp);
+struct task_struct *cgroup_taskset_next(struct cgroup_taskset *tset,
+					struct cgroup_subsys_state **dst_cssp);
 
 void css_task_iter_start(struct cgroup_subsys_state *css,
 			 struct css_task_iter *it);
@@ -231,11 +238,42 @@ void css_task_iter_end(struct css_task_iter *it);
 /**
  * cgroup_taskset_for_each - iterate cgroup_taskset
  * @task: the loop cursor
+ * @dst_css: the destination css
  * @tset: taskset to iterate
+ *
+ * @tset may contain multiple tasks and they may belong to multiple
+ * processes.
+ *
+ * On the v2 hierarchy, there may be tasks from multiple processes and they
+ * may not share the source or destination csses.
+ *
+ * On traditional hierarchies, when there are multiple tasks in @tset, if a
+ * task of a process is in @tset, all tasks of the process are in @tset.
+ * Also, all are guaranteed to share the same source and destination csses.
+ *
+ * Iteration is not in any specific order.
  */
-#define cgroup_taskset_for_each(task, tset)				\
-	for ((task) = cgroup_taskset_first((tset)); (task);		\
-	     (task) = cgroup_taskset_next((tset)))
+#define cgroup_taskset_for_each(task, dst_css, tset)			\
+	for ((task) = cgroup_taskset_first((tset), &(dst_css));		\
+	     (task);							\
+	     (task) = cgroup_taskset_next((tset), &(dst_css)))
+
+/**
+ * cgroup_taskset_for_each_leader - iterate group leaders in a cgroup_taskset
+ * @leader: the loop cursor
+ * @dst_css: the destination css
+ * @tset: takset to iterate
+ *
+ * Iterate threadgroup leaders of @tset.  For single-task migrations, @tset
+ * may not contain any.
+ */
+#define cgroup_taskset_for_each_leader(leader, dst_css, tset)		\
+	for ((leader) = cgroup_taskset_first((tset), &(dst_css));	\
+	     (leader);							\
+	     (leader) = cgroup_taskset_next((tset), &(dst_css)))	\
+		if ((leader) != (leader)->group_leader)			\
+			;						\
+		else
 
 /*
  * Inline functions.
@@ -315,11 +353,11 @@ static inline void css_put(struct cgroup_subsys_state *css)
  */
 #ifdef CONFIG_PROVE_RCU
 extern struct mutex cgroup_mutex;
-extern struct rw_semaphore css_set_rwsem;
+extern spinlock_t css_set_lock;
 #define task_css_set_check(task, __c)					\
 	rcu_dereference_check((task)->cgroups,				\
 		lockdep_is_held(&cgroup_mutex) ||			\
-		lockdep_is_held(&css_set_rwsem) ||			\
+		lockdep_is_held(&css_set_lock) ||			\
 		((task)->flags & PF_EXITING) || (__c))
 #else
 #define task_css_set_check(task, __c)					\
@@ -441,9 +479,9 @@ static inline bool cgroup_on_dfl(const struct cgroup *cgrp)
 }
 
 /* no synchronization, the result can only be used as a hint */
-static inline bool cgroup_has_tasks(struct cgroup *cgrp)
+static inline bool cgroup_is_populated(struct cgroup *cgrp)
 {
-	return !list_empty(&cgrp->cset_links);
+	return cgrp->populated_cnt;
 }
 
 /* returns ino associated with a cgroup */
@@ -497,6 +535,25 @@ static inline void pr_cont_cgroup_path(struct cgroup *cgrp)
 	pr_cont_kernfs_path(cgrp->kn);
 }
 
+static inline void cgroup_init_kthreadd(void)
+{
+	/*
+	 * kthreadd is inherited by all kthreads, keep it in the root so
+	 * that the new kthreads are guaranteed to stay in the root until
+	 * initialization is finished.
+	 */
+	current->no_cgroup_migration = 1;
+}
+
+static inline void cgroup_kthread_ready(void)
+{
+	/*
+	 * This kthread finished initialization.  The creator should have
+	 * set PF_NO_SETAFFINITY if this kthread should stay in the root.
+	 */
+	current->no_cgroup_migration = 0;
+}
+
 #else /* !CONFIG_CGROUPS */
 
 struct cgroup_subsys_state;
@@ -516,15 +573,13 @@ static inline void cgroup_cancel_fork(struct task_struct *p,
 static inline void cgroup_post_fork(struct task_struct *p,
 				    void *ss_priv[CGROUP_CANFORK_COUNT]) {}
 static inline void cgroup_exit(struct task_struct *p) {}
+static inline void cgroup_free(struct task_struct *p) {}
 
 static inline int cgroup_init_early(void) { return 0; }
 static inline int cgroup_init(void) { return 0; }
+static inline void cgroup_init_kthreadd(void) {}
+static inline void cgroup_kthread_ready(void) {}
 
-static inline int subsys_cgroup_allow_attach(struct cgroup *cgrp,
-					     struct cgroup_taskset *tset)
-{
-	return 0;
-}
 #endif /* !CONFIG_CGROUPS */
 
 #endif /* _LINUX_CGROUP_H */

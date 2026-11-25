@@ -66,7 +66,6 @@ enum {
 
 /* cgroup_root->flags */
 enum {
-	CGRP_ROOT_SANE_BEHAVIOR	= (1 << 0), /* __DEVEL__sane_behavior specified */
 	CGRP_ROOT_NOPREFIX	= (1 << 1), /* mounted subsystems have no named prefix */
 	CGRP_ROOT_XATTR		= (1 << 2), /* supports extended attributes */
 };
@@ -76,10 +75,21 @@ enum {
 	CFTYPE_ONLY_ON_ROOT	= (1 << 0),	/* only create on root cgrp */
 	CFTYPE_NOT_ON_ROOT	= (1 << 1),	/* don't create on root cgrp */
 	CFTYPE_NO_PREFIX	= (1 << 3),	/* (DON'T USE FOR NEW FILES) no subsys prefix */
+	CFTYPE_WORLD_WRITABLE	= (1 << 4),	/* (DON'T USE FOR NEW FILES) S_IWUGO */
 
 	/* internal flags, do not use outside cgroup core proper */
 	__CFTYPE_ONLY_ON_DFL	= (1 << 16),	/* only on default hierarchy */
 	__CFTYPE_NOT_ON_DFL	= (1 << 17),	/* not on default hierarchy */
+};
+
+/*
+ * cgroup_file is the handle for a file instance created in a cgroup which
+ * is used, for example, to generate file changed notifications.  This can
+ * be obtained by setting cftype->file_offset.
+ */
+struct cgroup_file {
+	/* do not access any fields from outside cgroup core */
+	struct kernfs_node *kn;
 };
 
 /*
@@ -121,6 +131,12 @@ struct cgroup_subsys_state {
 	 * used to allow interrupting and resuming iterations.
 	 */
 	u64 serial_nr;
+
+	/*
+	 * Incremented by online self and children.  Used to guarantee that
+	 * parents are not offlined before their children.
+	 */
+	atomic_t online_cnt;
 
 	/* percpu_ref killing and RCU release */
 	struct rcu_head rcu_head;
@@ -196,6 +212,12 @@ struct css_set {
 	 */
 	struct list_head e_cset_node[CGROUP_SUBSYS_COUNT];
 
+	/* all css_task_iters currently walking this cset */
+	struct list_head task_iters;
+
+	/* dead and being drained, ignore for migration */
+	bool dead;
+
 	/* For RCU-protected deletion */
 	struct rcu_head rcu_head;
 };
@@ -217,16 +239,16 @@ struct cgroup {
 	int id;
 
 	/*
-	 * If this cgroup contains any tasks, it contributes one to
-	 * populated_cnt.  All children with non-zero popuplated_cnt of
-	 * their own contribute one.  The count is zero iff there's no task
-	 * in this cgroup or its subtree.
+	 * Each non-empty css_set associated with this cgroup contributes
+	 * one to populated_cnt.  All children with non-zero popuplated_cnt
+	 * of their own contribute one.  The count is zero iff there's no
+	 * task in this cgroup or its subtree.
 	 */
 	int populated_cnt;
 
 	struct kernfs_node *kn;		/* cgroup kernfs entry */
-	struct kernfs_node *procs_kn;	/* kn for "cgroup.procs" */
-	struct kernfs_node *populated_kn; /* kn for "cgroup.subtree_populated" */
+	struct cgroup_file procs_file;	/* handle for "cgroup.procs" */
+	struct cgroup_file events_file;	/* handle for "cgroup.events" */
 
 	/*
 	 * The bitmask of subsystems enabled on the child cgroups.
@@ -324,11 +346,6 @@ struct cftype {
 	 */
 	char name[MAX_CFTYPE_NAME];
 	unsigned long private;
-	/*
-	 * If not 0, file mode is set to this value, otherwise it will
-	 * be figured out automatically
-	 */
-	umode_t mode;
 
 	/*
 	 * The maximum length of string, excluding trailing nul, that can
@@ -338,6 +355,14 @@ struct cftype {
 
 	/* CFTYPE_* flags */
 	unsigned int flags;
+
+	/*
+	 * If non-zero, should contain the offset from the start of css to
+	 * a struct cgroup_file field.  cgroup will record the handle of
+	 * the created file into it.  The recorded handle can be used as
+	 * long as the containing css remains accessible.
+	 */
+	unsigned int file_offset;
 
 	/*
 	 * Fields used for internal bookkeeping.  Initialized automatically
@@ -405,18 +430,16 @@ struct cgroup_subsys {
 	void (*css_reset)(struct cgroup_subsys_state *css);
 	void (*css_e_css_changed)(struct cgroup_subsys_state *css);
 
-	int (*can_attach)(struct cgroup_subsys_state *css,
-			  struct cgroup_taskset *tset);
-	void (*cancel_attach)(struct cgroup_subsys_state *css,
-			      struct cgroup_taskset *tset);
-	void (*attach)(struct cgroup_subsys_state *css,
-		       struct cgroup_taskset *tset);
+	int (*allow_attach)(struct cgroup_subsys_state *css,
+			    struct cgroup_taskset *tset);
+	int (*can_attach)(struct cgroup_taskset *tset);
+	void (*cancel_attach)(struct cgroup_taskset *tset);
+	void (*attach)(struct cgroup_taskset *tset);
 	int (*can_fork)(struct task_struct *task, void **priv_p);
 	void (*cancel_fork)(struct task_struct *task, void *priv);
 	void (*fork)(struct task_struct *task, void *priv);
-	void (*exit)(struct cgroup_subsys_state *css,
-		     struct cgroup_subsys_state *old_css,
-		     struct task_struct *task);
+	void (*exit)(struct task_struct *task);
+	void (*free)(struct task_struct *task);
 	void (*bind)(struct cgroup_subsys_state *root_css);
 
 	int disabled;

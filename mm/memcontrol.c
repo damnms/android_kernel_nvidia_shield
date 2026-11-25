@@ -5131,7 +5131,7 @@ static int memcg_update_kmem_limit(struct cgroup_subsys_state *css, u64 val)
 	mutex_lock(&memcg_create_mutex);
 	mutex_lock(&set_limit_mutex);
 	if (!memcg->kmem_account_flags && val != RESOURCE_MAX) {
-		if (cgroup_has_tasks(css->cgroup) || memcg_has_children(memcg)) {
+		if (cgroup_is_populated(css->cgroup) || memcg_has_children(memcg)) {
 			ret = -EBUSY;
 			goto out;
 		}
@@ -6169,8 +6169,7 @@ static struct cftype mem_cgroup_files[] = {
 	{
 		.name = "cgroup.event_control",
 		.write = cgroup_write_event_control,
-		.flags = CFTYPE_NO_PREFIX,
-		.mode = S_IWUGO,
+		.flags = CFTYPE_NO_PREFIX | CFTYPE_WORLD_WRITABLE,
 	},
 	{
 		.name = "swappiness",
@@ -6937,13 +6936,32 @@ static void mem_cgroup_clear_mc(void)
 	mem_cgroup_end_move(from);
 }
 
-static int mem_cgroup_can_attach(struct cgroup_subsys_state *css,
-				 struct cgroup_taskset *tset)
+static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 {
-	struct task_struct *p = cgroup_taskset_first(tset);
+	struct task_struct *leader, *p;
 	int ret = 0;
-	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+	struct cgroup_subsys_state *css;
+	struct mem_cgroup *memcg;
 	unsigned long move_charge_at_immigrate;
+
+	/* charge immigration isn't supported on the default hierarchy */
+	if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
+		return 0;
+
+	/*
+	 * Multi-process migrations only happen on the default hierarchy
+	 * where charge immigration is not used.  Perform charge
+	 * immigration if @tset contains a leader and whine if there are
+	 * multiple.
+	 */
+	p = NULL;
+	cgroup_taskset_for_each_leader(leader, css, tset) {
+		WARN_ON_ONCE(p);
+		p = leader;
+		memcg = mem_cgroup_from_css(css);
+	}
+	if (!p)
+		return 0;
 
 	/*
 	 * We are now commited to this value whatever it is. Changes in this
@@ -6984,8 +7002,7 @@ static int mem_cgroup_can_attach(struct cgroup_subsys_state *css,
 	return ret;
 }
 
-static void mem_cgroup_cancel_attach(struct cgroup_subsys_state *css,
-				     struct cgroup_taskset *tset)
+static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
 	mem_cgroup_clear_mc();
 }
@@ -7132,10 +7149,10 @@ retry:
 	up_read(&mm->mmap_sem);
 }
 
-static void mem_cgroup_move_task(struct cgroup_subsys_state *css,
-				 struct cgroup_taskset *tset)
+static void mem_cgroup_move_task(struct cgroup_taskset *tset)
 {
-	struct task_struct *p = cgroup_taskset_first(tset);
+	struct cgroup_subsys_state *css;
+	struct task_struct *p = cgroup_taskset_first(tset, &css);
 	struct mm_struct *mm = get_task_mm(p);
 
 	if (mm) {
@@ -7147,17 +7164,14 @@ static void mem_cgroup_move_task(struct cgroup_subsys_state *css,
 		mem_cgroup_clear_mc();
 }
 #else	/* !CONFIG_MMU */
-static int mem_cgroup_can_attach(struct cgroup_subsys_state *css,
-				 struct cgroup_taskset *tset)
+static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 {
 	return 0;
 }
-static void mem_cgroup_cancel_attach(struct cgroup_subsys_state *css,
-				     struct cgroup_taskset *tset)
+static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
 }
-static void mem_cgroup_move_task(struct cgroup_subsys_state *css,
-				 struct cgroup_taskset *tset)
+static void mem_cgroup_move_task(struct cgroup_taskset *tset)
 {
 }
 #endif
@@ -7186,7 +7200,6 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.can_attach = mem_cgroup_can_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.attach = mem_cgroup_move_task,
-	.allow_attach = mem_cgroup_allow_attach,
 	.bind = mem_cgroup_bind,
 	.legacy_cftypes = mem_cgroup_files,
 	.early_init = 0,

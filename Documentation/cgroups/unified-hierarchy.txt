@@ -94,11 +94,9 @@ the process.
 
 2-1. Mounting
 
-Currently, unified hierarchy can be mounted with the following mount
-command.  Note that this is still under development and scheduled to
-change soon.
+Unified hierarchy can be mounted with the following mount command.
 
- mount -t cgroup -o __DEVEL__sane_behavior cgroup $MOUNT_POINT
+ mount -t cgroup2 none $MOUNT_POINT
 
 All controllers which support the unified hierarchy and are not bound
 to other hierarchies are automatically bound to unified hierarchy and
@@ -106,12 +104,6 @@ show up at the root of it.  Controllers which are enabled only in the
 root of unified hierarchy can be bound to other hierarchies.  This
 allows mixing unified hierarchy with the traditional multiple
 hierarchies in a fully backward compatible way.
-
-For development purposes, the following boot parameter makes all
-controllers to appear on the unified hierarchy whether supported or
-not.
-
- cgroup__DEVEL__legacy_files_on_dfl
 
 A controller can be moved across hierarchies only after the controller
 is no longer referenced in its current hierarchy.  Because per-cgroup
@@ -341,11 +333,11 @@ is riddled with issues.
   unnecessarily complicated and probably done this way because event
   delivery itself was expensive.
 
-Unified hierarchy implements an interface file "cgroup.populated"
-which can be used to monitor whether the cgroup's subhierarchy has
-tasks in it or not.  Its value is 0 if there is no task in the cgroup
-and its descendants; otherwise, 1.  poll and [id]notify events are
-triggered when the value changes.
+Unified hierarchy implements "populated" field in "cgroup.events"
+interface file which can be used to monitor whether the cgroup's
+subhierarchy has tasks in it or not.  Its value is 0 if there is no
+task in the cgroup and its descendants; otherwise, 1.  poll and
+[id]notify events are triggered when the value changes.
 
 This is significantly lighter and simpler and trivially allows
 delegating management of subhierarchy - subhierarchy monitoring can
@@ -373,6 +365,10 @@ supported and the interface files "release_agent" and
   they got recycled in-between reads.
 
 - The "cgroup.clone_children" file is removed.
+
+- /proc/PID/cgroup keeps reporting the cgroup that a zombie belonged
+  to before exiting.  If the cgroup is removed before the zombie is
+  reaped, " (deleted)" is appeneded to the path.
 
 
 5-3. Controller File Conventions
@@ -434,6 +430,11 @@ may be specified in any order and not all pairs have to be specified.
   the default settings should be keyed with "default" and appear as
   the first entry in the file.  Specific entries can use "default" as
   its value to indicate inheritance of the default value.
+
+- For events which are not very high frequency, an interface file
+  "events" should be created which lists event key value pairs.
+  Whenever a notifiable event happens, file modified event should be
+  generated on the file.
 
 
 5-4. Per-Controller Changes
