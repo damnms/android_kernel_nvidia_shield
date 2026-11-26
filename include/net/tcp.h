@@ -1607,4 +1607,12 @@ static inline s32 tcp_rto_delta(const struct sock *sk)
 	return (s32)(rto_time_stamp - tcp_time_stamp);
 }
 
+static inline void tcp_segs_in(struct tcp_sock *tp, const struct sk_buff *skb)
+{
+	u16 segs_in;
+
+	segs_in = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
+	tp->segs_in += segs_in;
+}
+
 #endif	/* _TCP_H */

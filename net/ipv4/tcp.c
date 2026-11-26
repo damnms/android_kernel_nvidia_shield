@@ -2326,6 +2326,10 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tcp_set_ca_state(sk, TCP_CA_Open);
 	tcp_clear_retrans(tp);
 	inet_csk_delack_init(sk);
+	tp->bytes_acked = 0;
+	tp->bytes_received = 0;
+	tp->segs_in = 0;
+	tp->segs_out = 0;
 	/* Initialize rcv_mss to TCP_MIN_MSS to avoid division by 0
 	 * issue in __tcp_select_window()
 	 */
@@ -2770,6 +2774,14 @@ void tcp_get_info(const struct sock *sk, struct tcp_info *info)
 	info->tcpi_rcv_space = tp->rcvq_space.space;
 
 	info->tcpi_total_retrans = tp->total_retrans;
+
+	info->tcpi_pacing_rate = sk->sk_pacing_rate != ~0U ?
+					sk->sk_pacing_rate : ~0ULL;
+	info->tcpi_max_pacing_rate = ~0ULL;
+	info->tcpi_bytes_acked = tp->bytes_acked;
+	info->tcpi_bytes_received = tp->bytes_received;
+	info->tcpi_segs_out = tp->segs_out;
+	info->tcpi_segs_in = tp->segs_in;
 }
 EXPORT_SYMBOL_GPL(tcp_get_info);
 
