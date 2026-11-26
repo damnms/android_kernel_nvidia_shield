@@ -3640,11 +3640,17 @@ dev_read(struct file *filp, char __user *buf, size_t count, loff_t *pos)
 	int ret;
 	u8 *p_u8_my_buf;
 
+	if (count == 0)
+		return 0;
+
 	p_u8_my_buf = kmalloc(count, GFP_KERNEL);
 	if (p_u8_my_buf == NULL)
 		return -ENOMEM;
 
-	p_u8_my_buf[0] = buf[0];
+	if (get_user(p_u8_my_buf[0], buf)) {
+		kfree(p_u8_my_buf);
+		return -EFAULT;
+	}
 	ret = rm_tch_spi_read(p_u8_my_buf[0], p_u8_my_buf, count);
 
 	if (ret) {
