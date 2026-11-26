@@ -10249,6 +10249,19 @@ static int wl_construct_reginfo(struct wl_priv *wl, s32 bw_cap)
 	}
 #undef LOCAL_BUF_LEN
 
+	/*
+	 * The channel arrays keep a fixed layout: cfg80211 BSS entries point at
+	 * these structs, so rewriting center_freq in place made BSSes found under
+	 * one locale show up on another channel after a country change (e.g. 157
+	 * became 60). Disable every channel first; the firmware list below
+	 * enables the allowed ones. orig_flags follows flags, otherwise a later
+	 * regulatory update (handle_channel) enables the disabled channels again.
+	 */
+	for (j = 0; j < ARRAYSIZE(__wl_2ghz_channels); j++)
+		__wl_2ghz_channels[j].flags = IEEE80211_CHAN_DISABLED;
+	for (j = 0; j < ARRAYSIZE(__wl_5ghz_a_channels); j++)
+		__wl_5ghz_a_channels[j].flags = IEEE80211_CHAN_DISABLED;
+
 	list = (wl_uint32_list_t *)(void *)pbuf;
 	band = array_size = n_2g = n_5g = 0;
 	for (i = 0; i < dtoh32(list->count); i++) {
@@ -10286,26 +10299,20 @@ static int wl_construct_reginfo(struct wl_priv *wl, s32 bw_cap)
 		}
 		if (!ht40_allowed && CHSPEC_IS40(c))
 			continue;
-		for (j = 0; (j < *n_cnt && (*n_cnt < array_size)); j++) {
+		for (j = 0; j < array_size; j++) {
 			if (band_chan_arr[j].hw_value == channel) {
 				update = true;
 				break;
 			}
 		}
-		if (update)
-			index = j;
-		else
-			index = *n_cnt;
-		if (index <  array_size) {
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2, 6, 38)
-			band_chan_arr[index].center_freq =
-				ieee80211_channel_to_frequency(channel);
-#else
-			band_chan_arr[index].center_freq =
-				ieee80211_channel_to_frequency(channel, band);
-#endif
-			band_chan_arr[index].hw_value = channel;
-
+		if (!update) {
+			WL_DBG(("channel %d not in the channel table\n", channel));
+			continue;
+		}
+		index = j;
+		if (band_chan_arr[index].flags & IEEE80211_CHAN_DISABLED)
+			(*n_cnt)++;
+		{
 			if (CHSPEC_IS40(c) && ht40_allowed) {
 				/* assuming the order is HT20, HT40 Upper,
 				 *  HT40 lower from chanspecs
@@ -10349,13 +10356,15 @@ static int wl_construct_reginfo(struct wl_priv *wl, s32 bw_cap)
 					}
 				}
 			}
-			if (!update)
-				(*n_cnt)++;
 		}
 
 	}
-	__wl_band_2ghz.n_channels = n_2g;
-	__wl_band_5ghz_a.n_channels = n_5g;
+	for (j = 0; j < ARRAYSIZE(__wl_2ghz_channels); j++)
+		__wl_2ghz_channels[j].orig_flags = __wl_2ghz_channels[j].flags;
+	for (j = 0; j < ARRAYSIZE(__wl_5ghz_a_channels); j++)
+		__wl_5ghz_a_channels[j].orig_flags = __wl_5ghz_a_channels[j].flags;
+	__wl_band_2ghz.n_channels = n_2g ? ARRAYSIZE(__wl_2ghz_channels) : 0;
+	__wl_band_5ghz_a.n_channels = n_5g ? ARRAYSIZE(__wl_5ghz_a_channels) : 0;
 	kfree(pbuf);
 	return err;
 }
