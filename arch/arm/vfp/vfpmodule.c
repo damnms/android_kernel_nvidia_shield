@@ -451,8 +451,13 @@ static int vfp_pm_suspend(void)
 	struct thread_info *ti = current_thread_info();
 	u32 fpexc = fmrx(FPEXC);
 
-	/* If lazy disable, re-enable the VFP ready for it to be saved */
-	if (vfp_current_hw_state[ti->cpu] != &ti->vfpstate) {
+	/*
+	 * If lazy disable, re-enable the VFP ready for it to be saved.
+	 * Only when the hardware holds this thread's state: otherwise it
+	 * holds another thread's registers or kernel mode NEON data, and
+	 * the thread's own state is already saved in ti->vfpstate.
+	 */
+	if (vfp_state_in_hw(ti->cpu, ti)) {
 		fpexc |= FPEXC_EN;
 		fmxr(FPEXC, fpexc);
 	}
